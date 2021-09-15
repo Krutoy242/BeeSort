@@ -9,15 +9,10 @@ Breeds best Princesses and Drones together
 local sides = require("sides")
 local component = require'component'
 
-local proxies = {
-  component.proxy('e32f247b-1a3d-46cd-b9c4-6704c6429949'),
-  component.proxy('f24961ff-833a-4a07-badc-37e02b6ed64a'),
-}
-
 -- Temperature, Humidity
 local beeHabitats = {
   Agrarian    = { 0, 0},
-  Austere     = { 1, 1},
+  Austere     = { 2, 1},
   Avenging    = { 0, 0},
   Boggy       = { 0,-1},
   Common      = { 0, 0},
@@ -30,7 +25,7 @@ local beeHabitats = {
   Farmerly    = { 0, 0},
   Fiendish    = { 3, 1},
   Forest      = { 0, 0},
-  Frugal      = { 1, 1},
+  Frugal      = { 2, 1},
   Glacial     = {-3, 0},
   Hermitic    = { 0, 0},
   Heroic      = { 0, 0},
@@ -43,7 +38,7 @@ local beeHabitats = {
   Meadows     = { 0, 0},
   Merry       = {-3, 0},
   Miry        = { 0,-1},
-  Modest      = { 1, 1},
+  Modest      = { 2, 1},
   Monastic    = { 0, 0},
   Noble       = { 0, 0},
   Phantasmal  = {-1, 0},
@@ -94,9 +89,9 @@ local function getTolerance(v)
   local word = v:match("^(%S+)")
   local num = tonumber(v:match("(%d+)$")) or 0
   return ({
-      Both={-num,num},
-      Up=  {0,num},
-      Down={-num,0},
+      Both={num,num},
+      Up  ={0,num},
+      Down={num,0},
       None={0,0},
     })[word]
 end
@@ -105,8 +100,17 @@ local function getCallbacks(data)
   return {
     name = data.name,
     comp = function (stack)
+      -- Explicit comparator
       if data.comp and not data.comp(stack) then return false end
 
+      -- Default comparator
+      for _,v1 in pairs({stack.individual.active.species, stack.individual.inactive.species}) do
+        for _,v2 in pairs({'Vindictive','Vengeful','Avenging'}) do
+          if v1 == v2 then return false end
+        end
+      end
+
+      -- Other
       local active = stack.individual.active
       local h1 = beeHabitats[active.species]
       local h2 = data.habitat
@@ -117,23 +121,32 @@ local function getCallbacks(data)
         getTolerance(active.humidityTolerance),
       }
       for i = 1, 2 do
-        if not (h1[i] >= h2[i]+ht[i][1] and h1[i] <= h2[i]+ht[i][2]) then
+        if not (h1[i] - ht[i][1] <= h2[i] and h1[i] + ht[i][2] >= h2[i]) then
           return false
         end
       end
       return true
     end,
     getPrincessStack = function ()
-      return data.tr.getStackInSlot(data.out, 1)
+      local status, result = pcall(data.tr.proxy.getStackInSlot, data.out, 1)
+      if status and result then return result end
     end,
     isNeedDrone = function (notCheckPrincess, princessStack)
       if notCheckPrincess or (princessStack and isPrincess(princessStack)) then
-        return not data.tr.getStackInSlot(data.out, 2)
+        local status, result = pcall(data.tr.proxy.getStackInSlot, data.out, 2)
+        return status and not result
       end
     end,
-    move = moveCallback(data.tr.transferItem, data.source, data.out)
+    move = moveCallback(data.tr.proxy.transferItem, data.tr.source, data.out)
   }
 end
+
+local proxies = {
+  {proxy = component.proxy('e32f247b-1a3d-46cd-b9c4-6704c6429949'), source = sides.up},
+  {proxy = component.proxy('f24961ff-833a-4a07-badc-37e02b6ed64a'), source = sides.down},
+  {proxy = component.proxy('bb4cba0c-cff0-4795-8f40-169bd7d915c6'), source = sides.north},
+  {proxy = component.proxy('ffe475ac-004c-466b-a049-85a76ff8ffe5'), source = sides.south},
+}
 
 local biomes = {
   getCallbacks{
@@ -143,35 +156,45 @@ local biomes = {
       return stack.individual.active.caveDwelling and stack.individual.active.neverSleeps
     end,
     tr     = proxies[2],
-    source = sides.down,
+    out    = sides.north,
+  },
+  getCallbacks{
+    name   = 'Hellish (true)',
+    habitat= { 3, 1},
+    comp   = function (stack)
+      return not stack.individual.active.caveDwelling or not stack.individual.active.neverSleeps
+    end,
+    tr     = proxies[4],
     out    = sides.north,
   },
   getCallbacks{
     name   = 'Icy',
     habitat= {-3, 0},
     tr     = proxies[2],
-    source = sides.down,
+    out    = sides.south,
+  },
+  getCallbacks{
+    name   = 'Cold',
+    habitat= {-1, 0},
+    tr     = proxies[3],
     out    = sides.south,
   },
   getCallbacks{
     name   = 'Swamp',
     habitat= { 0,-1},
     tr     = proxies[2],
-    source = sides.down,
     out    = sides.up,
   },
   getCallbacks{
     name   = 'Desert',
-    habitat= { 1, 1},
+    habitat= { 2, 1},
     tr     = proxies[1],
-    source = sides.up,
     out    = sides.south,
   },
   getCallbacks{
     name   = 'Tropic',
     habitat= { 1,-1},
     tr     = proxies[1],
-    source = sides.up,
     out    = sides.north,
   },
 
@@ -180,12 +203,12 @@ local biomes = {
     name   = 'Normal',
     habitat= { 0, 0},
     tr     = proxies[1],
-    source = sides.top,
     out    = sides.east,
   },
 }
 
-local trashFnc = moveCallback(proxies[1].transferItem, sides.top, sides.bottom)
+local trashFnc   = moveCallback(proxies[1].proxy.transferItem, sides.up,   sides.down)
+local archiveFnc = moveCallback(proxies[2].proxy.transferItem, sides.down, sides.east)
 
 ---------------------------------------------
 -- Calculating score
@@ -227,7 +250,7 @@ local scores = {
   flowering            = function(v) return v / 30 end,
   speed                = function(v) return v end,
   lifespan             = function(v) return 80.0 / v end,
-  species              = function(v) return (({Cultivated=0, Avenging=-5})[v] or 1.0) + getDiversity(v) end,
+  species              = function(v) return (({Cultivated=0, Vindictive=-4, Vengeful=-4, Avenging=-4})[v] or 1.0) + getDiversity(v) end,
   neverSleeps          = function(v) return v and 2.0 or 0.0 end,
   humidityTolerance    = function(v) return tolerance(v) end,
   temperatureTolerance = function(v) return tolerance(v) end,
@@ -251,7 +274,7 @@ end
 local function getSortedList()
   local t = {}
   local slot = 0
-  for stack in proxies[1].getAllStacks(sides.top) do
+  for stack in proxies[1].proxy.getAllStacks(sides.top) do
     slot = slot + 1
     local v = getStackScore(stack)
     if v ~= nil then
@@ -316,18 +339,43 @@ local function purgeDrones()
   end
 end
 
+local function archieveBee(stack, slot)
+  for _, biome in pairs(biomes)do
+    if biome.comp(stack) then return false end
+  end
+  return archiveFnc(slot, 64)
+end
+
+local function archivePrincesses()
+  for i=1,cachedTableLength do
+    local t = cachedTable[i]
+    if t then
+      local slot, v, stack, ifDrone = table.unpack(t)
+      if not ifDrone and archieveBee(stack, slot) then
+        cachedTable[i] = nil
+        print(' O archived', stack.label, 'score:', v)
+      end
+    end
+  end
+end
+
 local function cycle()
+  cycleNumber = cycleNumber+1
+
   -- Check where we need something
   for i, biome in pairs(biomes)do
     moveToBiome(biome)
   end
 
   -- Update cashed table
-  cycleNumber = cycleNumber+1
-  if cycleNumber > 5 then
+  if cycleNumber % 5 == 0 then
     cachedTable, cachedTableLength = getSortedList()
-    cycleNumber = 0
     purgeDrones()
+  end
+
+  -- Archieve Princesses that have no place
+  if cycleNumber % 20 == 0 then
+    archivePrincesses()
   end
 end
 
